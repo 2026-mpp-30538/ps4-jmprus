@@ -131,53 +131,6 @@ print(df.head)
 ```
 
 
-```{python}
-# scrape all pages
-
-base_url = 'https://oig.hhs.gov/fraud/enforcement/'
-all_data = []
-
-# create loop
-for page in range(1, 537):
-
-  # be nice to server
-  time.sleep(1)
-
-  url = f'{base_url}?page={page}'
-  response = requests.get(url)
-  soup = BeautifulSoup(response.text, 'lxml')
-
-  actions = soup.find_all(
-    'li',
-    class_='usa-card card--list pep-card--minimal mobile:grid-col-12'
-  )
-
-  for li in actions:
-    heading = li.find('h2', class_='usa-card__heading')
-    a_tag = heading.find('a') if heading else None
-
-    title = a_tag.get_text(strip=True) if a_tag else None
-    link = 'https://oig.hhs.gov' + a_tag['href'] if a_tag else None
-
-    date_tag = li.find('span')
-    date = date_tag.get_text(strip=True) if date_tag else None
-
-    cat_tag = li.find('li', class_='usa-tag')
-    category = cat_tag.get_text(strip=True) if cat_tag else None
-
-    all_data.append({
-      'title': title,
-      'date': date,
-      'category': category,
-      'link': link
-    })
-  
-  print(f'Finished page {page}')
-
-# convert to dataframe
-df_actions = pd.DataFrame(all_data)
-df_actions['date'] = pd.to_datetime(df_actions['date'])
-```
 
 
 
@@ -488,15 +441,26 @@ chart
 * based on "Criminal and Civil Actions" vs. "State Enforcement Agencies"
 
 ```{python}
-# create a new variable for category type
-#df_monthly['enforce_div'] = df_monthly[df_monthly['category']==#[('Criminal and Civil Actions',
-# 'State Enforcement Agencies')]]
+# change yearmonth to timestamp
+df_actions['yearmonth'] = df_actions['date'].dt.to_period('M').astype(str)
 
-filtered_df = df_monthly[df_monthly['category'].isin(['Criminal and Civil Actions', 'State Enforcement Agencies'])]
+# filter dataframe categories
+filtered_df = df_actions[df_actions['category'].isin([
+  'Criminal and Civil Actions',
+  'State Enforcement Agencies'
+])]
+
+# aggregate by month and category
+df_monthly = (
+  filtered_df
+  .groupby(['yearmonth', 'category'])
+  .size()
+  .reset_index(name='count')
+)
 
 # create the plot
 chart = alt.Chart(filtered_df).mark_line().encode(
-  x=alt.X('yearmonth:T', title='Date', axis=alt.Axis(format='%Y')),
+  x=alt.X('yearmonth:T', title='Date'),
   y=alt.Y('count:Q', title='Number of Enforcement Actions per Month'),
   color=alt.Color('category:N',
   legend=alt.Legend(title='Enforcement Action Type'))
@@ -509,29 +473,49 @@ chart
 * based on five topics
 
 ```{python}
-# create a new variable for category type
-df_monthly['enforce_type'] = df_monthly[df_monthly['category']==[('Criminal and Civil Actions',
- 'State Enforcement Agencies')]]
+# filter to criminal and civil actoins
+df_cc = df_actions[df_actions['category'] == 'Criminal and Civil Actions'].copy()
 
-df_monthly['enforce_type'] = df_monthly['title']
-str_contains['health', 'healthcare', 'hospital', 'nurse', 'medical']:'Health Care Fraud'
-str_contains['financial', 'bank']: 'Financial Fraud'
-str_contains['drug']: 'Drug Enforcement'
-str_contains['bribery', 'bribes', 'corruption']: 'Bribery/Corruption'
-else: 'Other'
+# set keywords
+topic_keywords = {
+  'Health Care Fraud': ['medicare', 'medicaid', 'heath', 'hospital', 'physician','nurse', 
+  'medical', 'provider'],
+  'Financial Fraud': ['bank', 'loan', 'financial', 'investment', 'finance'],
+  'Drug Enforcement': ['drug', 'opioid', 'pharmacy', 'pill'],
+  'Bribery/Corruption': ['bribe', 'corruption', 'kickback']
+}
 
- 'Health Care Fraud'
- 'Financial Fraud' 
- 'Drug Enforcement'
- 'Bribery/Corruption'
- 'Other'
+def classify_topic(title):
+  t = title.lower()
+  for topic, words in topic_keywords.items():
+    if any(w in t for w in words):
+      return topic
+  return 'Other'
+
+
+# apply classifier to new column
+df_cc['topic'] = df_cc['title'].apply(classify_topic)
+
+# sanity check
+df_cc['topic'].value_counts()
+df_cc[['title', 'topic']].sample(10)
+
+# aggregate by month and topic
+df_cc['yearmonth'] = df_cc['date'].dt.to_period('M').dt.to_timestamp()
+
+df_monthly = (
+  df_cc
+  .groupby(['yearmonth', 'topic'])
+  .size()
+  .reset_index(name='count')
+)
 
 # create the plot
 chart = alt.Chart(df_monthly).mark_line().encode(
   x=alt.X('yearmonth:T', title='Date', axis=alt.Axis(format='%Y')),
   y=alt.Y('count:Q', title='Number of Enforcement Actions per Month'),
-  color=alt.Color('enforce_div:N',
-  legend=alt.Legend(title='Type of Enforcement Action'))
+  color=alt.Color('topic:N',
+  legend=alt.Legend(title='Enforcement Action Topic'))
 ).properties(
   title='Number of Enforcement Actions Over Time'
 )
